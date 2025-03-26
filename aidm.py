@@ -17,6 +17,7 @@ resource_locks = {res: threading.Lock() for res in resources}
 rag = nx.DiGraph()  # Resource Allocation Graph
 history = []  # For AI training
 deadlock_count = 0
+deadlock_per_process = {"P1": 0, "P2": 0, "P3": 0}  # Added for Commit 4
 execution_log = []  # For Gantt chart
 
 # AI Predictor
@@ -66,12 +67,13 @@ class Process(threading.Thread):
     def stop(self):
         self.running = False
 
-# Logging
+# Logging with timestamps (Commit 3)
 def log_event(event):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_text.insert(tk.END, f"[{timestamp}] {event}\n")
     log_text.see(tk.END)
     root.update_idletasks()
+
 # Deadlock Detection
 def detect_deadlock():
     try:
@@ -96,7 +98,7 @@ def predict_deadlock():
     current_state = [len(rag.nodes), len(rag.edges), random.random()]
     return predictor.predict_proba([current_state])[0][1]
 
-# Deadlock Handling Methods
+# Deadlock Handling with per-process tracking (Commit 4)
 def handle_deadlock(cycle, method="resolution"):
     global deadlock_count
     if method == "resolution":
@@ -109,42 +111,46 @@ def handle_deadlock(cycle, method="resolution"):
                 rag.remove_edge(victim, res)
                 log_event(f"Resolved by preempting {res} from {victim}")
                 deadlock_count += 1
+                deadlock_per_process[victim] += 1  # Track per process
                 break
     elif method == "avoidance":
         log_event("Avoidance: Delaying resource allocation")
         time.sleep(1)
 
 # Visualization
-def plot_gantt():
+def plot_gantt():  # Enhanced in Commit 2
     plt.figure(figsize=(12, 6))
-    
-    # Process colors (Updated for Commit 2: Pastel shades for clarity)
     process_colors = {"P1": "#ff9999", "P2": "#ffff99", "P3": "#9999ff"}  # Pastel Red, Pastel Yellow, Pastel Blue
     process_ids = sorted(set(pid for pid, _, _ in execution_log))
-    y_positions = {pid: i for i, pid in enumerate(process_ids)}  # Assign y-position to each process
+    y_positions = {pid: i for i, pid in enumerate(process_ids)}
     
-    # Process execution logs with improved bar appearance
     for i, (pid, t, state) in enumerate(execution_log[-50:]):
         if i > 0:
             prev_t = execution_log[i-1][1] if i-1 >= max(0, len(execution_log)-50) else execution_log[-50][1]
             duration = t - prev_t
             plt.barh(y_positions[pid], duration, left=prev_t, height=0.8, color=process_colors[pid], edgecolor="black", label=pid if i == 1 else "")
 
-    # Customize the plot
     plt.yticks(range(len(process_ids)), process_ids, fontsize=12)
     plt.title("Gantt Chart: Process Execution Timeline", fontsize=16, pad=15)
     plt.xlabel("Time (seconds)", fontsize=14)
     plt.ylabel("Processes", fontsize=14)
     plt.grid(True, linestyle="--", alpha=0.7)
-    plt.legend(title="Processes", loc="upper right")  # Add legend
+    plt.legend(title="Processes", loc="upper right")
     plt.tight_layout()
     plt.show()
 
-def plot_deadlock_histogram():
-    plt.figure(figsize=(10, 5))
-    plt.bar(["Deadlocks"], [deadlock_count], color="red")
-    plt.title("Deadlock Frequency")
-    plt.ylabel("Count")
+def plot_deadlock_histogram():  # Enhanced in Commit 4
+    plt.figure(figsize=(10, 6))
+    process_ids = list(deadlock_per_process.keys())
+    counts = list(deadlock_per_process.values())
+    colors = ["#ff9999", "#ffff99", "#9999ff"]  # Pastel Red, Yellow, Blue
+    
+    plt.bar(process_ids, counts, color=colors, edgecolor="black")
+    plt.title("Deadlock Frequency by Process", fontsize=16, pad=15)
+    plt.xlabel("Processes", fontsize=14)
+    plt.ylabel("Number of Deadlocks", fontsize=14)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
     plt.show()
 
 # GUI Functions
@@ -196,30 +202,24 @@ def clear_log():
 # GUI Setup
 def setup_gui():
     global root, log_text, status_label
-
     root = tk.Tk()
     root.title("AIDM - Deadlock Manager")
     root.geometry("800x600")
     root.resizable(True, True)
     root.configure(bg="#f0f0f0")
 
-    # Header
     header = tk.Label(root, text="AI-Driven Deadlock Manager", font=("Helvetica", 16, "bold"), bg="#4a90e2", fg="white")
     header.pack(fill=tk.X, pady=(0, 10))
 
-    # Main Frame
     main_frame = tk.Frame(root, bg="#f0f0f0")
     main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=0)
 
-    # Left Frame for Buttons
     left_frame = tk.Frame(main_frame, bg="#f0f0f0", width=200)
     left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
 
-    # Right Frame for Log
     right_frame = tk.Frame(main_frame, bg="#f0f0f0")
     right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-    # Buttons in Left Frame
     buttons = [
         ("Start Simulation", start_simulation, "green"),
         ("Show RAG", show_rag, "blue"),
@@ -235,11 +235,9 @@ def setup_gui():
         btn = tk.Button(left_frame, text=text, command=command, bg=color, fg="white", font=("Helvetica", 10), relief=tk.RAISED)
         btn.pack(fill=tk.X, padx=5, pady=5)
 
-    # Log Text in Right Frame
     log_text = scrolledtext.ScrolledText(right_frame, height=30, width=70, wrap=tk.WORD, bg="#ffffff", font=("Courier", 10))
     log_text.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
-    # Status Bar
     status_frame = tk.Frame(root, bg="#e0e0e0")
     status_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
     status_label = tk.Label(status_frame, text="Status: Idle", font=("Helvetica", 10), bg="#e0e0e0")
