@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import tkinter as tk
 from tkinter import scrolledtext
+import datetime
 
 # Simulated system state
 resources = ["Printer", "Disk", "Tape"]
@@ -67,10 +68,10 @@ class Process(threading.Thread):
 
 # Logging
 def log_event(event):
-    log_text.insert(tk.END, f"[Event] {event}\n")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_text.insert(tk.END, f"[{timestamp}] {event}\n")
     log_text.see(tk.END)
     root.update_idletasks()
-
 # Deadlock Detection
 def detect_deadlock():
     try:
