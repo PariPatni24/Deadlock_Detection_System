@@ -39,23 +39,16 @@ class Process(threading.Thread):
             target = random.choice(resources)
             if target not in self.held_resources and target != self.waiting_for:
                 log_event(f"Process {self.pid} requesting {target}")
-
-                # Mutual Exclusion: Resources are held exclusively
                 if self.strategy == "prevention":
                     self.release_all_resources()
-
                 if resource_locks[target].acquire(blocking=False):
                     self.held_resources.append(target)
                     rag.add_edge(self.pid, target)
                     log_event(f"Process {self.pid} acquired {target}")
                 else:
-                    # Hold and Wait: Holding at least one resource while waiting
                     self.waiting_for = target
                     rag.add_edge(target, self.pid)
                     log_event(f"Process {self.pid} waiting for {target}")
-
-                    # No Preemption: Resource can't be forcibly taken
-                    # Circular Wait: Check via RAG later
                     feature_vector = [len(self.held_resources), len(rag.edges), random.random()]
                     history.append((feature_vector, 0))
                     time.sleep(0.1)
@@ -76,6 +69,7 @@ class Process(threading.Thread):
 def log_event(event):
     log_text.insert(tk.END, f"[Event] {event}\n")
     log_text.see(tk.END)
+    root.update_idletasks()
 
 # Deadlock Detection
 def detect_deadlock():
@@ -121,12 +115,28 @@ def handle_deadlock(cycle, method="resolution"):
 
 # Visualization
 def plot_gantt():
-    plt.figure(figsize=(10, 5))
-    for pid, t, state in execution_log[-50:]:
-        plt.barh(pid, 0.1, left=t, color="green" if state == "Running" else "red")
-    plt.title("Gantt Chart: Process Execution")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Process")
+    plt.figure(figsize=(12, 6))
+    
+    # Process colors (Updated for Commit 2: Pastel shades for clarity)
+    process_colors = {"P1": "#ff9999", "P2": "#ffff99", "P3": "#9999ff"}  # Pastel Red, Pastel Yellow, Pastel Blue
+    process_ids = sorted(set(pid for pid, _, _ in execution_log))
+    y_positions = {pid: i for i, pid in enumerate(process_ids)}  # Assign y-position to each process
+    
+    # Process execution logs with improved bar appearance
+    for i, (pid, t, state) in enumerate(execution_log[-50:]):
+        if i > 0:
+            prev_t = execution_log[i-1][1] if i-1 >= max(0, len(execution_log)-50) else execution_log[-50][1]
+            duration = t - prev_t
+            plt.barh(y_positions[pid], duration, left=prev_t, height=0.8, color=process_colors[pid], edgecolor="black", label=pid if i == 1 else "")
+
+    # Customize the plot
+    plt.yticks(range(len(process_ids)), process_ids, fontsize=12)
+    plt.title("Gantt Chart: Process Execution Timeline", fontsize=16, pad=15)
+    plt.xlabel("Time (seconds)", fontsize=14)
+    plt.ylabel("Processes", fontsize=14)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend(title="Processes", loc="upper right")  # Add legend
+    plt.tight_layout()
     plt.show()
 
 def plot_deadlock_histogram():
@@ -139,30 +149,23 @@ def plot_deadlock_histogram():
 # GUI Functions
 def start_simulation():
     global processes
-    log_text.delete(1.0, tk.END)
     for p in processes:
         p.stop()
     processes.clear()
-    processes = [
-        Process("P1"),
-        Process("P2", "prevention"),
-        Process("P3")
-    ]
+    processes = [Process("P1"), Process("P2", "prevention"), Process("P3")]
     for p in processes:
         p.start()
     log_event("Simulation started with P1, P2 (prevention), P3")
+    status_label.config(text="Status: Running")
 
 def show_rag():
-    log_text.delete(1.0, tk.END)
     log_event(f"RAG Edges: {list(rag.edges)}")
 
 def predict_risk():
-    log_text.delete(1.0, tk.END)
     prob = predict_deadlock()
     log_event(f"Deadlock Risk: {prob:.2f}")
 
 def detect_resolve():
-    log_text.delete(1.0, tk.END)
     deadlock = detect_deadlock()
     if deadlock:
         handle_deadlock(deadlock[0])
@@ -179,52 +182,77 @@ def show_histogram():
 
 def stop_simulation():
     global processes
-    log_text.delete(1.0, tk.END)
     for p in processes:
         p.stop()
     processes.clear()
     log_event("Simulation stopped")
+    status_label.config(text="Status: Stopped")
 
-# Tkinter GUI Setup
-root = tk.Tk()
-root.title("AIDM - Deadlock Manager")
-root.geometry("600x400")
+def clear_log():
+    log_text.delete(1.0, tk.END)
+    log_event("Log cleared")
 
-# Buttons
-start_btn = tk.Button(root, text="Start Simulation", command=start_simulation, bg="green", fg="white")
-start_btn.pack(fill=tk.X, padx=5, pady=2)
+# GUI Setup
+def setup_gui():
+    global root, log_text, status_label
 
-rag_btn = tk.Button(root, text="Show RAG", command=show_rag, bg="blue", fg="white")
-rag_btn.pack(fill=tk.X, padx=5, pady=2)
+    root = tk.Tk()
+    root.title("AIDM - Deadlock Manager")
+    root.geometry("800x600")
+    root.resizable(True, True)
+    root.configure(bg="#f0f0f0")
 
-predict_btn = tk.Button(root, text="Predict Risk", command=predict_risk, bg="orange", fg="white")
-predict_btn.pack(fill=tk.X, padx=5, pady=2)
+    # Header
+    header = tk.Label(root, text="AI-Driven Deadlock Manager", font=("Helvetica", 16, "bold"), bg="#4a90e2", fg="white")
+    header.pack(fill=tk.X, pady=(0, 10))
 
-detect_btn = tk.Button(root, text="Detect & Resolve", command=detect_resolve, bg="red", fg="white")
-detect_btn.pack(fill=tk.X, padx=5, pady=2)
+    # Main Frame
+    main_frame = tk.Frame(root, bg="#f0f0f0")
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=0)
 
-gantt_btn = tk.Button(root, text="Show Gantt Chart", command=show_gantt, bg="purple", fg="white")
-gantt_btn.pack(fill=tk.X, padx=5, pady=2)
+    # Left Frame for Buttons
+    left_frame = tk.Frame(main_frame, bg="#f0f0f0", width=200)
+    left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
 
-hist_btn = tk.Button(root, text="Show Histogram", command=show_histogram, bg="purple", fg="white")
-hist_btn.pack(fill=tk.X, padx=5, pady=2)
+    # Right Frame for Log
+    right_frame = tk.Frame(main_frame, bg="#f0f0f0")
+    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-stop_btn = tk.Button(root, text="Stop Simulation", command=stop_simulation, bg="darkred", fg="white")
-stop_btn.pack(fill=tk.X, padx=5, pady=2)
+    # Buttons in Left Frame
+    buttons = [
+        ("Start Simulation", start_simulation, "green"),
+        ("Show RAG", show_rag, "blue"),
+        ("Predict Risk", predict_risk, "orange"),
+        ("Detect & Resolve", detect_resolve, "red"),
+        ("Show Gantt Chart", show_gantt, "purple"),
+        ("Show Histogram", show_histogram, "purple"),
+        ("Stop Simulation", stop_simulation, "darkred"),
+        ("Clear Log", clear_log, "gray"),
+    ]
 
-# Log Text Area
-log_text = scrolledtext.ScrolledText(root, height=15)
-log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    for text, command, color in buttons:
+        btn = tk.Button(left_frame, text=text, command=command, bg=color, fg="white", font=("Helvetica", 10), relief=tk.RAISED)
+        btn.pack(fill=tk.X, padx=5, pady=5)
+
+    # Log Text in Right Frame
+    log_text = scrolledtext.ScrolledText(right_frame, height=30, width=70, wrap=tk.WORD, bg="#ffffff", font=("Courier", 10))
+    log_text.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+    # Status Bar
+    status_frame = tk.Frame(root, bg="#e0e0e0")
+    status_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
+    status_label = tk.Label(status_frame, text="Status: Idle", font=("Helvetica", 10), bg="#e0e0e0")
+    status_label.pack(side=tk.LEFT, padx=5)
 
 # Main Execution
 if __name__ == "__main__":
     random.seed(42)
     np.random.seed(42)
+    setup_gui()
     log_event("AIDM system initialized")
     log_event("Example Deadlock Conditions:")
     log_event("- Mutual Exclusion: Printer held by P1 exclusively")
     log_event("- Hold and Wait: P1 holds Printer, waits for Disk")
     log_event("- No Preemption: P2 can't take Disk from P3")
     log_event("- Circular Wait: P1 waits for Disk (P2), P2 waits for Printer (P1)")
-
     root.mainloop()
