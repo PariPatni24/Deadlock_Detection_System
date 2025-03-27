@@ -322,8 +322,31 @@ class DeadlockVisualizer:
 
     def run_manual_simulation(self):
         try:
-            n = int(self.num_processes.get())
-            avail = [int(x) for x in self.available_entry.get().split()]
+            # Validate number of processes
+            n = self.num_processes.get().strip()
+            if not n.isdigit() or int(n) <= 0:
+                messagebox.showerror("Input Error", "Number of Processes must be a positive integer.")
+                return
+
+            n = int(n)
+            if n != len(self.process_entries):
+                messagebox.showerror("Input Error", "Number of process entries does not match the specified number of processes.")
+                return
+
+            # Validate available resources
+            avail_input = self.available_entry.get().strip().split()
+            if len(avail_input) != 3:
+                messagebox.showerror("Input Error", "Available Resources must contain exactly 3 values (Printer, Disk, Tape).")
+                return
+            try:
+                avail = [int(x) for x in avail_input]
+                if any(x < 0 for x in avail):
+                    messagebox.showerror("Input Error", "Available Resources must be non-negative integers.")
+                    return
+            except ValueError:
+                messagebox.showerror("Input Error", "Available Resources must be integers.")
+                return
+
             self.available = dict(zip(self.resources, avail))
             self.processes = [f"P{i}" for i in range(n)]
             self.max_demand = {}
@@ -331,11 +354,48 @@ class DeadlockVisualizer:
             self.requested = {}
             self.rag.clear()
 
+            # Validate process entries
             for i, (max_entry, alloc_entry, req_entry) in enumerate(self.process_entries):
                 p = f"P{i}"
-                self.max_demand[p] = dict(zip(self.resources, [int(x) for x in max_entry.get().split()]))
-                self.allocated[p] = dict(zip(self.resources, [int(x) for x in alloc_entry.get().split()]))
-                self.requested[p] = dict(zip(self.resources, [int(x) for x in req_entry.get().split()]))
+                max_input = max_entry.get().strip().split()
+                alloc_input = alloc_entry.get().strip().split()
+                req_input = req_entry.get().strip().split()
+
+                # Check length
+                if len(max_input) != 3 or len(alloc_input) != 3 or len(req_input) != 3:
+                    messagebox.showerror("Input Error", f"Process {p} must have exactly 3 values for Max, Allocated, and Requested.")
+                    return
+
+                # Check integer and non-negative
+                try:
+                    max_vals = [int(x) for x in max_input]
+                    alloc_vals = [int(x) for x in alloc_input]
+                    req_vals = [int(x) for x in req_input]
+                    if any(x < 0 for x in max_vals + alloc_vals + req_vals):
+                        messagebox.showerror("Input Error", f"Process {p} values must be non-negative integers.")
+                        return
+                except ValueError:
+                    messagebox.showerror("Input Error", f"Process {p} values must be integers.")
+                    return
+
+                # Check allocated <= max
+                if any(alloc_vals[j] > max_vals[j] for j in range(3)):
+                    messagebox.showerror("Input Error", f"Process {p} Allocated resources cannot exceed Max Demand.")
+                    return
+
+                self.max_demand[p] = dict(zip(self.resources, max_vals))
+                self.allocated[p] = dict(zip(self.resources, alloc_vals))
+                self.requested[p] = dict(zip(self.resources, req_vals))
+
+            # Check total allocated vs available
+            total_allocated = {r: sum(self.allocated[p][r] for p in self.processes) for r in self.resources}
+            for r in self.resources:
+                if total_allocated[r] > self.available[r] + total_allocated[r]:  # Simplified check; assumes initial total resources = available + allocated
+                    messagebox.showerror("Input Error", f"Total allocated {r} exceeds available resources.")
+                    return
+
+            # Build RAG
+            for p in self.processes:
                 for r in self.resources:
                     if self.allocated[p][r] > 0:
                         self.rag.add_edge(r, p)
@@ -346,7 +406,7 @@ class DeadlockVisualizer:
             self.run_simulation(is_manual=True)
 
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Unexpected Error", f"An unexpected error occurred: {str(e)}")
 
     def run_example_simulation(self):
         self.processes = ["P0", "P1", "P2"]
@@ -416,14 +476,10 @@ class DeadlockVisualizer:
         if safe_seq:
             tk.Label(scrollable_frame, text=f"Safe Sequence: {safe_seq}", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(pady=5)
 
-        # Add Histograms for Allocated vs Requested Resources
         tk.Label(scrollable_frame, text="Resource Distribution Comparison", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=10)
-
-        # Calculate total allocated and requested per process (sum across all resources)
         allocated_totals = [sum(self.allocated[p].values()) for p in self.processes]
         requested_totals = [sum(self.requested[p].values()) for p in self.processes]
 
-        # Create histogram figure
         fig, ax = plt.subplots(figsize=(8, 4))
         bar_width = 0.35
         index = np.arange(len(self.processes))
@@ -437,7 +493,6 @@ class DeadlockVisualizer:
         ax.set_xticklabels(self.processes)
         ax.legend()
 
-        # Embed histogram in Tkinter window
         hist_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
         hist_frame.pack(pady=10)
         hist_canvas = FigureCanvasTkAgg(fig, master=hist_frame)
