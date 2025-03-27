@@ -1,257 +1,530 @@
-import threading
-import time
-import random
+import tkinter as tk
+from tkinter import ttk, messagebox
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 import networkx as nx
 import matplotlib.pyplot as plt
-from collections import defaultdict
-import tkinter as tk
-from tkinter import scrolledtext
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import time
 import datetime
 
-# Simulated system state
-resources = ["Printer", "Disk", "Tape"]
-processes = []
-resource_locks = {res: threading.Lock() for res in resources}
-rag = nx.DiGraph()  # Resource Allocation Graph
-history = []  # For AI training
-deadlock_count = 0
-deadlock_per_process = {"P1": 0, "P2": 0, "P3": 0}  # Added for Commit 4
-execution_log = []  # For Gantt chart
+class DeadlockVisualizer:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Deadlock Manager")
+        self.root.geometry("1200x800")
+        self.theme = "dark"
+        self.processes = []
+        self.resources = ["Printer", "Disk", "Tape"]
+        self.available = {"Printer": 2, "Disk": 1, "Tape": 1}
+        self.max_demand = {}
+        self.allocated = {}
+        self.requested = {}
+        self.rag = nx.DiGraph()
 
-# AI Predictor
-predictor = LogisticRegression()
-X_train, y_train = [], []
+        self.setup_styles()
+        self.create_home_page()
 
-# Process class with deadlock conditions
-class Process(threading.Thread):
-    def __init__(self, pid, strategy="normal"):
-        super().__init__()
-        self.pid = pid
-        self.held_resources = []
-        self.waiting_for = None
-        self.strategy = strategy  # "normal", "prevention", "avoidance"
-        self.start_time = time.time()
-        self.running = True
+    def setup_styles(self):
+        self.style = ttk.Style()
+        self.style.configure("TButton", font=("Arial", 14, "bold"), padding=10)
+        self.style.configure("TLabel", font=("Arial", 16))
+        self.style.configure("Treeview.Heading", font=("Arial", 12, "bold"))
 
-    def run(self):
-        global history, deadlock_count
-        while self.running:
-            target = random.choice(resources)
-            if target not in self.held_resources and target != self.waiting_for:
-                log_event(f"Process {self.pid} requesting {target}")
-                if self.strategy == "prevention":
-                    self.release_all_resources()
-                if resource_locks[target].acquire(blocking=False):
-                    self.held_resources.append(target)
-                    rag.add_edge(self.pid, target)
-                    log_event(f"Process {self.pid} acquired {target}")
-                else:
-                    self.waiting_for = target
-                    rag.add_edge(target, self.pid)
-                    log_event(f"Process {self.pid} waiting for {target}")
-                    feature_vector = [len(self.held_resources), len(rag.edges), random.random()]
-                    history.append((feature_vector, 0))
-                    time.sleep(0.1)
-            time.sleep(random.uniform(0.1, 0.5))
-            execution_log.append((self.pid, time.time() - self.start_time, "Running"))
+    def create_home_page(self):
+        self.home_frame = tk.Frame(self.root, bg="#1a1a1a")
+        self.home_frame.pack(fill="both", expand=True)
 
-    def release_all_resources(self):
-        for res in self.held_resources[:]:
-            resource_locks[res].release()
-            rag.remove_edge(self.pid, res)
-            log_event(f"Process {self.pid} released {res}")
-        self.held_resources.clear()
+        header_canvas = tk.Canvas(self.home_frame, bg="#1a1a1a", highlightthickness=0, height=200)
+        header_canvas.pack(fill="x", pady=20)
+        header_canvas.create_oval(500, 50, 700, 250, fill="#4a90e2", outline="")
+        header_canvas.create_text(600, 150, text="Deadlock Manager", font=("Arial", 28, "bold"), fill="white")
 
-    def stop(self):
-        self.running = False
+        button_panel = tk.Frame(self.home_frame, bg="#1a1a1a")
+        button_panel.pack(expand=True)
 
-# Logging with timestamps (Commit 3)
-def log_event(event):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_text.insert(tk.END, f"[{timestamp}] {event}\n")
-    log_text.see(tk.END)
-    root.update_idletasks()
+        tk.Label(button_panel, text="Welcome to Deadlock Analysis", font=("Arial", 20, "italic"), bg="#1a1a1a", fg="white").grid(row=0, column=0, columnspan=2, pady=20)
 
-# Deadlock Detection
-def detect_deadlock():
-    try:
-        cycles = list(nx.simple_cycles(rag))
-        if cycles:
-            log_event(f"Deadlock detected: {cycles}")
-            return cycles
-        return None
-    except:
-        return None
+        ttk.Button(button_panel, text="Enter Custom Scenario", command=self.show_input_page).grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        ttk.Button(button_panel, text="Run Example Scenario", command=self.run_example_simulation).grid(row=1, column=1, padx=20, pady=10, sticky="ew")
+        ttk.Button(button_panel, text="Learn About Deadlocks", command=self.show_interactive_info).grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        ttk.Button(button_panel, text="Switch Theme", command=self.toggle_theme).grid(row=2, column=1, padx=20, pady=10, sticky="ew")
 
-# AI Prediction
-def train_predictor():
-    if len(history) > 10:
-        X_train = [h[0] for h in history]
-        y_train = [h[1] for h in history]
-        predictor.fit(X_train, y_train)
+        tk.Label(self.home_frame, text="Designed for Deadlock Detection & Prevention", font=("Arial", 12), bg="#1a1a1a", fg="#cccccc").pack(side="bottom", pady=10)
 
-def predict_deadlock():
-    if len(X_train) == 0:
-        return 0.0
-    current_state = [len(rag.nodes), len(rag.edges), random.random()]
-    return predictor.predict_proba([current_state])[0][1]
+        self.apply_theme()
 
-# Deadlock Handling with per-process tracking (Commit 4)
-def handle_deadlock(cycle, method="resolution"):
-    global deadlock_count
-    if method == "resolution":
-        victim = cycle[0]
-        for p in processes:
-            if p.pid == victim and p.held_resources:
-                res = p.held_resources[0]
-                resource_locks[res].release()
-                p.held_resources.remove(res)
-                rag.remove_edge(victim, res)
-                log_event(f"Resolved by preempting {res} from {victim}")
-                deadlock_count += 1
-                deadlock_per_process[victim] += 1  # Track per process
-                break
-    elif method == "avoidance":
-        log_event("Avoidance: Delaying resource allocation")
-        time.sleep(1)
+    def show_input_page(self):
+        self.home_frame.pack_forget()
+        self.input_frame = tk.Frame(self.root, relief="raised", borderwidth=2, bg="#1a1a1a")
+        self.input_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-# Visualization
-def plot_gantt():  # Enhanced in Commit 2
-    plt.figure(figsize=(12, 6))
-    process_colors = {"P1": "#ff9999", "P2": "#ffff99", "P3": "#9999ff"}  # Pastel Red, Pastel Yellow, Pastel Blue
-    process_ids = sorted(set(pid for pid, _, _ in execution_log))
-    y_positions = {pid: i for i, pid in enumerate(process_ids)}
-    
-    for i, (pid, t, state) in enumerate(execution_log[-50:]):
-        if i > 0:
-            prev_t = execution_log[i-1][1] if i-1 >= max(0, len(execution_log)-50) else execution_log[-50][1]
-            duration = t - prev_t
-            plt.barh(y_positions[pid], duration, left=prev_t, height=0.8, color=process_colors[pid], edgecolor="black", label=pid if i == 1 else "")
+        canvas = tk.Canvas(self.input_frame, bg="#1a1a1a")
+        scrollbar = ttk.Scrollbar(self.input_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="#1a1a1a")
 
-    plt.yticks(range(len(process_ids)), process_ids, fontsize=12)
-    plt.title("Gantt Chart: Process Execution Timeline", fontsize=16, pad=15)
-    plt.xlabel("Time (seconds)", fontsize=14)
-    plt.ylabel("Processes", fontsize=14)
-    plt.grid(True, linestyle="--", alpha=0.7)
-    plt.legend(title="Processes", loc="upper right")
-    plt.tight_layout()
-    plt.show()
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.configure(yscrollcommand=scrollbar.set)
 
-def plot_deadlock_histogram():  # Enhanced in Commit 4
-    plt.figure(figsize=(10, 6))
-    process_ids = list(deadlock_per_process.keys())
-    counts = list(deadlock_per_process.values())
-    colors = ["#ff9999", "#ffff99", "#9999ff"]  # Pastel Red, Yellow, Blue
-    
-    plt.bar(process_ids, counts, color=colors, edgecolor="black")
-    plt.title("Deadlock Frequency by Process", fontsize=16, pad=15)
-    plt.xlabel("Processes", fontsize=14)
-    plt.ylabel("Number of Deadlocks", fontsize=14)
-    plt.grid(True, linestyle="--", alpha=0.7)
-    plt.tight_layout()
-    plt.show()
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
 
-# GUI Functions
-def start_simulation():
-    global processes
-    for p in processes:
-        p.stop()
-    processes.clear()
-    processes = [Process("P1"), Process("P2", "prevention"), Process("P3")]
-    for p in processes:
-        p.start()
-    log_event("Simulation started with P1, P2 (prevention), P3")
-    status_label.config(text="Status: Running")
+        tk.Label(scrollable_frame, text="Custom Deadlock Scenario", font=("Arial", 20, "bold"), bg="#1a1a1a", fg="white").pack(anchor="w", pady=15, padx=10)
+        tk.Label(scrollable_frame, text="Number of Processes:", font=("Arial", 14), bg="#1a1a1a", fg="white").pack(anchor="w", pady=5, padx=10)
+        self.num_processes = tk.Entry(scrollable_frame, font=("Arial", 12))
+        self.num_processes.pack(anchor="w", pady=5, padx=10)
 
-def show_rag():
-    log_event(f"RAG Edges: {list(rag.edges)}")
+        tk.Label(scrollable_frame, text="Available Resources (Printer Disk Tape):", font=("Arial", 14), bg="#1a1a1a", fg="white").pack(anchor="w", pady=5, padx=10)
+        self.available_entry = tk.Entry(scrollable_frame, font=("Arial", 12))
+        self.available_entry.pack(anchor="w", pady=5, padx=10)
 
-def predict_risk():
-    prob = predict_deadlock()
-    log_event(f"Deadlock Risk: {prob:.2f}")
+        self.process_entries = []
+        def update_process_entries(*args):
+            try:
+                n = int(self.num_processes.get() or 0)
+                for entry_tuple in self.process_entries:
+                    for widget in entry_tuple:
+                        widget.master.destroy()
+                self.process_entries.clear()
+                for i in range(n):
+                    frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+                    frame.pack(anchor="w", pady=5, padx=10)
+                    tk.Label(frame, text=f"P{i} Max (Printer Disk Tape):", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(side="left", pady=2)
+                    max_entry = tk.Entry(frame, font=("Arial", 12), width=15)
+                    max_entry.pack(side="left", pady=2, padx=5)
+                    tk.Label(frame, text=f"P{i} Allocated:", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(side="left", pady=2, padx=5)
+                    alloc_entry = tk.Entry(frame, font=("Arial", 12), width=15)
+                    alloc_entry.pack(side="left", pady=2, padx=5)
+                    tk.Label(frame, text=f"P{i} Request:", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(side="left", pady=2, padx=5)
+                    req_entry = tk.Entry(frame, font=("Arial", 12), width=15)
+                    req_entry.pack(side="left", pady=2, padx=5)
+                    self.process_entries.append((max_entry, alloc_entry, req_entry))
+            except ValueError:
+                pass
 
-def detect_resolve():
-    deadlock = detect_deadlock()
-    if deadlock:
-        handle_deadlock(deadlock[0])
-        history[-1] = (history[-1][0], 1)
-        train_predictor()
-    else:
-        log_event("No deadlock detected")
+        self.num_processes.bind("<KeyRelease>", update_process_entries)
+        ttk.Button(scrollable_frame, text="Start Simulation", command=self.run_manual_simulation).pack(anchor="w", pady=15, padx=10)
+        ttk.Button(scrollable_frame, text="Back to Home", command=self.back_to_home).pack(anchor="w", pady=10, padx=10)
 
-def show_gantt():
-    plot_gantt()
+        self.apply_theme()
 
-def show_histogram():
-    plot_deadlock_histogram()
+    def show_interactive_info(self):
+        info_window = tk.Toplevel(self.root)
+        info_window.title("Understanding Deadlocks")
+        info_window.geometry("800x600")
+        info_window.configure(bg="#1a1a1a" if self.theme == "dark" else "#f5f5f5")
 
-def stop_simulation():
-    global processes
-    for p in processes:
-        p.stop()
-    processes.clear()
-    log_event("Simulation stopped")
-    status_label.config(text="Status: Stopped")
+        canvas = tk.Canvas(info_window, bg="#1a1a1a")
+        scrollbar = ttk.Scrollbar(info_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="#1a1a1a")
 
-def clear_log():
-    log_text.delete(1.0, tk.END)
-    log_event("Log cleared")
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.configure(yscrollcommand=scrollbar.set)
 
-# GUI Setup
-def setup_gui():
-    global root, log_text, status_label
-    root = tk.Tk()
-    root.title("AIDM - Deadlock Manager")
-    root.geometry("800x600")
-    root.resizable(True, True)
-    root.configure(bg="#f0f0f0")
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((400, 0), window=scrollable_frame, anchor="n")
 
-    header = tk.Label(root, text="AI-Driven Deadlock Manager", font=("Helvetica", 16, "bold"), bg="#4a90e2", fg="white")
-    header.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(scrollable_frame, text="What is a Deadlock?", font=("Arial", 24, "bold"), bg="#1a1a1a", fg="white").pack(pady=10)
+        def_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        def_frame.pack(pady=10)
+        tk.Label(def_frame, text="Definition:", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack()
+        tk.Label(def_frame, text="A deadlock is when processes get stuck in a loop, each holding a resource and waiting for another that’s already taken.", 
+                 font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=700, justify="center").pack(pady=5)
 
-    main_frame = tk.Frame(root, bg="#f0f0f0")
-    main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=0)
+        example_frame = tk.Frame(scrollable_frame, bg="#1a1a1a", relief="groove", borderwidth=2)
+        example_frame.pack(pady=10, padx=20)
+        tk.Label(example_frame, text="Real-Life Example:", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=5)
+        tk.Label(example_frame, text="Two drivers at a crossroads: Driver A has the North Road and needs the East Road. Driver B has the East Road and needs the North Road. Neither can move!",
+                 font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=700, justify="center").pack(pady=5)
 
-    left_frame = tk.Frame(main_frame, bg="#f0f0f0", width=200)
-    left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        rag = nx.DiGraph()
+        rag.add_edge("Driver A", "East Road", type="request")
+        rag.add_edge("North Road", "Driver A", type="assignment")
+        rag.add_edge("Driver B", "North Road", type="request")
+        rag.add_edge("East Road", "Driver B", type="assignment")
+        
+        plt.clf()
+        pos = nx.spring_layout(rag)
+        nx.draw_networkx_nodes(rag, pos, nodelist=["Driver A", "Driver B"], node_color="#ff9999", node_shape="s", node_size=500)
+        nx.draw_networkx_nodes(rag, pos, nodelist=["North Road", "East Road"], node_color="#9999ff", node_shape="o", node_size=500)
+        nx.draw_networkx_edges(rag, pos, edgelist=[(u, v) for u, v, d in rag.edges(data=True) if d["type"] == "assignment"], edge_color="black", style="solid", width=2)
+        nx.draw_networkx_edges(rag, pos, edgelist=[(u, v) for u, v, d in rag.edges(data=True) if d["type"] == "request"], edge_color="gray", style="dashed", width=2)
+        nx.draw_networkx_labels(rag, pos, font_size=10)
+        
+        canvas_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        canvas_frame.pack(pady=10)
+        rag_canvas = FigureCanvasTkAgg(plt.gcf(), master=canvas_frame)
+        rag_canvas.draw()
+        rag_canvas.get_tk_widget().pack()
 
-    right_frame = tk.Frame(main_frame, bg="#f0f0f0")
-    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        explain_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        explain_frame.pack(pady=10)
+        tk.Label(explain_frame, text="What’s Happening Here?", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack()
+        tk.Label(explain_frame, text="- Solid Lines: Driver A controls the North Road, Driver B controls the East Road.\n- Dashed Lines: Driver A wants the East Road, Driver B wants the North Road.\n- Result: A circle of waiting = Deadlock!",
+                 font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=700, justify="center").pack(pady=5)
 
-    buttons = [
-        ("Start Simulation", start_simulation, "green"),
-        ("Show RAG", show_rag, "blue"),
-        ("Predict Risk", predict_risk, "orange"),
-        ("Detect & Resolve", detect_resolve, "red"),
-        ("Show Gantt Chart", show_gantt, "purple"),
-        ("Show Histogram", show_histogram, "purple"),
-        ("Stop Simulation", stop_simulation, "darkred"),
-        ("Clear Log", clear_log, "gray"),
-    ]
+        ttk.Button(scrollable_frame, text="Back to Home", command=lambda: [info_window.destroy(), self.create_home_page()]).pack(pady=15)
 
-    for text, command, color in buttons:
-        btn = tk.Button(left_frame, text=text, command=command, bg=color, fg="white", font=("Helvetica", 10), relief=tk.RAISED)
-        btn.pack(fill=tk.X, padx=5, pady=5)
+        self.apply_theme()
 
-    log_text = scrolledtext.ScrolledText(right_frame, height=30, width=70, wrap=tk.WORD, bg="#ffffff", font=("Courier", 10))
-    log_text.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+    def show_prevention_options(self, deadlock_cycles, scrollable_frame):
+        cycle = deadlock_cycles[0]
+        involved_processes = [n for n in cycle if n.startswith("P")]
+        involved_resources = [n for n in cycle if n in self.resources]
 
-    status_frame = tk.Frame(root, bg="#e0e0e0")
-    status_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
-    status_label = tk.Label(status_frame, text="Status: Idle", font=("Helvetica", 10), bg="#e0e0e0")
-    status_label.pack(side=tk.LEFT, padx=5)
+        if len(involved_resources) <= 2 and len(involved_resources) > 0:
+            resource = involved_resources[0]
+            holder = next((p for r, p in self.rag.edges if r == resource), None)
+            requester = next((p for p, r in self.rag.edges if r == resource), None)
+            if holder and requester and holder != requester:
+                best_method = "Resource Preemption"
+                suggestion = f"Preempt {resource} from {holder} and allocate it to {requester}."
+                explanation = f"By preempting {resource} from {holder}, {requester} can complete its task and release all resources, breaking the cycle."
+                new_rag = self.rag.copy()
+                new_rag.remove_edge(resource, holder)
+                new_rag.add_edge(resource, requester, type="assignment")
+            else:
+                best_method = "Process Termination"
+                suggestion = f"Terminate {involved_processes[0]} to release its resources ({', '.join([r for r, p in self.rag.edges if p == involved_processes[0]])})."
+                explanation = f"Terminating {involved_processes[0]} releases its resources, allowing other processes to proceed and breaking the deadlock."
+                new_rag = self.rag.copy()
+                new_rag.remove_node(involved_processes[0])
+        elif len(involved_processes) > 2:
+            best_method = "Process Termination"
+            suggestion = f"Terminate {involved_processes[0]} to release its resources ({', '.join([r for r, p in self.rag.edges if p == involved_processes[0]])})."
+            explanation = f"Terminating {involved_processes[0]} releases its resources, allowing other processes to proceed and breaking the deadlock."
+            new_rag = self.rag.copy()
+            new_rag.remove_node(involved_processes[0])
+        else:
+            best_method = "Avoidance (Banker’s Algorithm)"
+            suggestion = "Deny further requests until a safe sequence is possible."
+            explanation = "Using Banker’s Algorithm, the system would have denied the last request that led to this unsafe state, preventing the deadlock."
+            new_rag = self.rag.copy()
 
-# Main Execution
+        apply_frame = tk.Frame(scrollable_frame, bg="#1a1a1a", relief="groove", borderwidth=2)
+        apply_frame.pack(pady=10)
+        tk.Label(apply_frame, text=f"Applied Prevention Technique: {best_method}", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=5)
+        tk.Label(apply_frame, text=f"Action: {suggestion}", font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=800, justify="left").pack(pady=5)
+        tk.Label(apply_frame, text=f"Explanation: {explanation}", font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=800, justify="left").pack(pady=5)
+
+        tk.Label(scrollable_frame, text="Resolved State:", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=5)
+        plt.clf()
+        pos = nx.spring_layout(new_rag)
+        nx.draw_networkx_nodes(new_rag, pos, nodelist=[p for p in new_rag.nodes if p.startswith("P")], node_color="#ff9999", node_shape="s", node_size=500)
+        nx.draw_networkx_nodes(new_rag, pos, nodelist=self.resources, node_color="#9999ff", node_shape="o", node_size=500)
+        nx.draw_networkx_edges(new_rag, pos, edgelist=[(u, v) for u, v in new_rag.edges if u in self.resources], edge_color="black", style="solid", width=2)
+        nx.draw_networkx_edges(new_rag, pos, edgelist=[(u, v) for u, v in new_rag.edges if v in self.resources], edge_color="gray", style="dashed", width=2)
+        nx.draw_networkx_labels(new_rag, pos, font_size=10)
+        
+        resolved_canvas_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        resolved_canvas_frame.pack(pady=10)
+        resolved_rag_canvas = FigureCanvasTkAgg(plt.gcf(), master=resolved_canvas_frame)
+        resolved_rag_canvas.draw()
+        resolved_rag_canvas.get_tk_widget().pack()
+
+        self.rag = new_rag
+
+    def back_to_home(self):
+        if hasattr(self, 'input_frame') and self.input_frame.winfo_exists():
+            self.input_frame.pack_forget()
+        if hasattr(self, 'sim_frame') and self.sim_frame.winfo_exists():
+            self.sim_frame.pack_forget()
+        self.create_home_page()
+
+    def apply_theme(self):
+        bg = "#1a1a1a" if self.theme == "dark" else "#f5f5f5"
+        fg = "white" if self.theme == "dark" else "black"
+        entry_bg = "#333333" if self.theme == "dark" else "#ffffff"
+        self.root.configure(bg=bg)
+        for frame in [self.home_frame, getattr(self, 'input_frame', None), getattr(self, 'sim_frame', None)]:
+            if frame and frame.winfo_exists():
+                frame.configure(bg=bg)
+                for widget in frame.winfo_children():
+                    if isinstance(widget, tk.Label):
+                        widget.configure(bg=bg, fg=fg)
+                    elif isinstance(widget, tk.Entry):
+                        widget.configure(bg=entry_bg, fg=fg, insertbackground=fg)
+                    elif isinstance(widget, tk.Frame):
+                        widget.configure(bg=bg)
+                    elif isinstance(widget, tk.Canvas):
+                        widget.configure(bg=bg)
+        for child in self.root.winfo_children():
+            if isinstance(child, tk.Toplevel):
+                child.configure(bg=bg)
+                for widget in child.winfo_children():
+                    if isinstance(widget, tk.Frame):
+                        widget.configure(bg=bg)
+                        for subwidget in widget.winfo_children():
+                            if isinstance(subwidget, tk.Label):
+                                subwidget.configure(bg=bg, fg=fg)
+
+    def toggle_theme(self):
+        self.theme = "light" if self.theme == "dark" else "dark"
+        self.apply_theme()
+
+    def plot_rag(self, frame):
+        plt.clf()
+        pos = nx.spring_layout(self.rag)
+        nx.draw_networkx_nodes(self.rag, pos, nodelist=[p for p in self.rag.nodes if p.startswith("P")], node_color="#ff9999", node_shape="s", node_size=500)
+        nx.draw_networkx_nodes(self.rag, pos, nodelist=self.resources, node_color="#9999ff", node_shape="o", node_size=500)
+        nx.draw_networkx_edges(self.rag, pos, edgelist=[(u, v) for u, v in self.rag.edges if u in self.resources], edge_color="black", style="solid", width=2)
+        nx.draw_networkx_edges(self.rag, pos, edgelist=[(u, v) for u, v in self.rag.edges if v in self.resources], edge_color="gray", style="dashed", width=2)
+        nx.draw_networkx_labels(self.rag, pos, font_size=10)
+        canvas = FigureCanvasTkAgg(plt.gcf(), master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+    def detect_deadlock(self):
+        try:
+            cycles = list(nx.simple_cycles(self.rag))
+            return cycles if cycles else None
+        except:
+            return None
+
+    def generate_deadlock_explanation(self, cycle):
+        # Analyze the cycle to explain circular wait
+        wait_explanations = []
+        n = len(cycle) - 1  # Last element is the repeated start process
+        for i in range(0, n-1, 2):
+            process = cycle[i]
+            resource = cycle[i+1]
+            holder = cycle[i+2] if i+2 < n else cycle[0]
+            wait_explanations.append(f"Process {process} is waiting for resource {resource}, which is held by Process {holder}.")
+        
+        # Combine into full explanation
+        explanation = "Reason for Deadlock: Circular Wait\n\n"
+        explanation += "The deadlock occurred due to a circular wait condition, where processes form a loop waiting for resources held by others:\n"
+        explanation += "\n".join(wait_explanations) + "\n\n"
+        explanation += "Additional Conditions Present:\n"
+        explanation += "- Mutual Exclusion: Resources (Printer, Disk, Tape) can only be held by one process at a time.\n"
+        explanation += "- Hold and Wait: Each process holds at least one resource while waiting for another.\n"
+        explanation += "- No Preemption: Resources cannot be forcibly taken; processes must release them voluntarily."
+        
+        return explanation
+
+    def bankers_safe(self):
+        work = self.available.copy()
+        finish = {p: False for p in self.processes}
+        need = {p: {r: self.max_demand[p][r] - self.allocated[p][r] for r in self.resources} for p in self.processes}
+        safe_sequence = []
+        
+        while False in finish.values():
+            found = False
+            for p in self.processes:
+                if not finish[p] and all(need[p][r] <= work[r] for r in self.resources):
+                    for r in self.resources:
+                        work[r] += self.allocated[p][r]
+                    finish[p] = True
+                    safe_sequence.append(p)
+                    found = True
+            if not found:
+                return None
+        return safe_sequence
+
+    def run_manual_simulation(self):
+        try:
+            n = int(self.num_processes.get())
+            avail = [int(x) for x in self.available_entry.get().split()]
+            self.available = dict(zip(self.resources, avail))
+            self.processes = [f"P{i}" for i in range(n)]
+            self.max_demand = {}
+            self.allocated = {}
+            self.requested = {}
+            self.rag.clear()
+
+            for i, (max_entry, alloc_entry, req_entry) in enumerate(self.process_entries):
+                p = f"P{i}"
+                self.max_demand[p] = dict(zip(self.resources, [int(x) for x in max_entry.get().split()]))
+                self.allocated[p] = dict(zip(self.resources, [int(x) for x in alloc_entry.get().split()]))
+                self.requested[p] = dict(zip(self.resources, [int(x) for x in req_entry.get().split()]))
+                for r in self.resources:
+                    if self.allocated[p][r] > 0:
+                        self.rag.add_edge(r, p)
+                    if self.requested[p][r] > 0:
+                        self.rag.add_edge(p, r)
+
+            self.input_frame.pack_forget()
+            self.run_simulation(is_manual=True)
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def run_example_simulation(self):
+        self.processes = ["P0", "P1", "P2"]
+        self.available = {"Printer": 1, "Disk": 1, "Tape": 0}
+        self.max_demand = {
+            "P0": {"Printer": 2, "Disk": 1, "Tape": 1},
+            "P1": {"Printer": 1, "Disk": 2, "Tape": 1},
+            "P2": {"Printer": 1, "Disk": 1, "Tape": 2}
+        }
+        self.allocated = {
+            "P0": {"Printer": 1, "Disk": 0, "Tape": 1},
+            "P1": {"Printer": 0, "Disk": 1, "Tape": 0},
+            "P2": {"Printer": 0, "Disk": 0, "Tape": 1}
+        }
+        self.requested = {
+            "P0": {"Printer": 0, "Disk": 1, "Tape": 0},
+            "P1": {"Printer": 1, "Disk": 0, "Tape": 0},
+            "P2": {"Printer": 0, "Disk": 1, "Tape": 0}
+        }
+        self.rag.clear()
+        for p in self.processes:
+            for r in self.resources:
+                if self.allocated[p][r] > 0:
+                    self.rag.add_edge(r, p)
+                if self.requested[p][r] > 0:
+                    self.rag.add_edge(p, r)
+
+        self.home_frame.pack_forget()
+        self.run_simulation(is_manual=False)
+
+    def run_simulation(self, is_manual=False):
+        self.sim_frame = tk.Frame(self.root, relief="raised", borderwidth=2, bg="#1a1a1a")
+        self.sim_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        canvas = tk.Canvas(self.sim_frame, bg="#1a1a1a")
+        scrollbar = ttk.Scrollbar(self.sim_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="#1a1a1a")
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((600, 0), window=scrollable_frame, anchor="n")
+
+        tk.Label(scrollable_frame, text="Deadlock Analysis", font=("Arial", 20, "bold"), bg="#1a1a1a", fg="white").pack(pady=15)
+
+        rag_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        rag_frame.pack(pady=10)
+        self.plot_rag(rag_frame)
+
+        deadlock = self.detect_deadlock()
+        status = "Deadlock Detected" if deadlock else "No Deadlock"
+        tk.Label(scrollable_frame, text=f"Status: {status}", font=("Arial", 14), bg="#1a1a1a", fg="white").pack(pady=5)
+        if deadlock:
+            tk.Label(scrollable_frame, text=f"Cycles: {deadlock}", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(pady=5)
+            if is_manual:
+                # Add deadlock reason explanation for custom scenario
+                explanation = self.generate_deadlock_explanation(deadlock[0])  # Use the first cycle
+                tk.Label(scrollable_frame, text=explanation, font=("Arial", 12), bg="#1a1a1a", fg="white", wraplength=1000, justify="left").pack(pady=10)
+                ttk.Button(scrollable_frame, text="Apply Prevention", command=lambda: self.show_prevention_options(deadlock, scrollable_frame)).pack(pady=10)
+            else:
+                ttk.Button(scrollable_frame, text="Prevention Options", command=lambda: self.show_prevention_options_window(deadlock)).pack(pady=10)
+
+        safe_seq = self.bankers_safe()
+        safe_status = "Safe" if safe_seq else "Unsafe"
+        tk.Label(scrollable_frame, text=f"Banker's Safety: {safe_status}", font=("Arial", 14), bg="#1a1a1a", fg="white").pack(pady=5)
+        if safe_seq:
+            tk.Label(scrollable_frame, text=f"Safe Sequence: {safe_seq}", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(pady=5)
+
+        ttk.Button(scrollable_frame, text="Back to Home", command=self.back_to_home).pack(pady=15)
+
+        self.apply_theme()
+
+    def show_prevention_options_window(self, deadlock_cycles):
+        prevent_window = tk.Toplevel(self.root)
+        prevent_window.title("Deadlock Prevention Options")
+        prevent_window.geometry("900x1000")
+        prevent_window.configure(bg="#1a1a1a" if self.theme == "dark" else "#f5f5f5")
+
+        canvas = tk.Canvas(prevent_window, bg="#1a1a1a")
+        scrollbar = ttk.Scrollbar(prevent_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="#1a1a1a")
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((450, 0), window=scrollable_frame, anchor="n")
+
+        tk.Label(scrollable_frame, text="Deadlock Prevention Techniques", font=("Arial", 20, "bold"), bg="#1a1a1a", fg="white").pack(pady=10)
+        techniques_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        techniques_frame.pack(pady=10, padx=20)
+        tk.Label(techniques_frame, text="1. Resource Preemption:", font=("Arial", 14, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(anchor="w")
+        tk.Label(techniques_frame, text="Take a resource from one process and give it to another to break the cycle.", font=("Arial", 12), bg="#1a1a1a", fg="white", wraplength=800).pack(anchor="w", pady=2)
+        tk.Label(techniques_frame, text="2. Avoidance (Banker’s Algorithm):", font=("Arial", 14, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(anchor="w", pady=5)
+        tk.Label(techniques_frame, text="Check if granting a request keeps the system in a safe state; deny if it risks deadlock.", font=("Arial", 12), bg="#1a1a1a", fg="white", wraplength=800).pack(anchor="w", pady=2)
+        tk.Label(techniques_frame, text="3. Process Termination:", font=("Arial", 14, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(anchor="w", pady=5)
+        tk.Label(techniques_frame, text="Kill one or more processes in the cycle and release their resources.", font=("Arial", 12), bg="#1a1a1a", fg="white", wraplength=800).pack(anchor="w", pady=2)
+
+        apply_frame = tk.Frame(scrollable_frame, bg="#1a1a1a", relief="groove", borderwidth=2)
+        apply_frame.pack(pady=10, padx=20)
+
+        cycle = deadlock_cycles[0]
+        involved_processes = [n for n in cycle if n.startswith("P")]
+        involved_resources = [n for n in cycle if n in self.resources]
+
+        if len(involved_resources) <= 2 and len(involved_resources) > 0:
+            resource = involved_resources[0]
+            holder = next((p for r, p in self.rag.edges if r == resource), None)
+            requester = next((p for p, r in self.rag.edges if r == resource), None)
+            if holder and requester and holder != requester:
+                best_method = "Resource Preemption"
+                suggestion = f"Preempt {resource} from {holder} and allocate it to {requester}."
+                explanation = f"By preempting {resource} from {holder}, {requester} can complete its task and release all resources, breaking the cycle."
+                new_rag = self.rag.copy()
+                new_rag.remove_edge(resource, holder)
+                new_rag.add_edge(resource, requester, type="assignment")
+            else:
+                best_method = "Process Termination"
+                suggestion = f"Terminate {involved_processes[0]} to release its resources ({', '.join([r for r, p in self.rag.edges if p == involved_processes[0]])})."
+                explanation = f"Terminating {involved_processes[0]} releases its resources, allowing other processes to proceed and breaking the deadlock."
+                new_rag = self.rag.copy()
+                new_rag.remove_node(involved_processes[0])
+        elif len(involved_processes) > 2:
+            best_method = "Process Termination"
+            suggestion = f"Terminate {involved_processes[0]} to release its resources ({', '.join([r for r, p in self.rag.edges if p == involved_processes[0]])})."
+            explanation = f"Terminating {involved_processes[0]} releases its resources, allowing other processes to proceed and breaking the deadlock."
+            new_rag = self.rag.copy()
+            new_rag.remove_node(involved_processes[0])
+        else:
+            best_method = "Avoidance (Banker’s Algorithm)"
+            suggestion = "Deny further requests until a safe sequence is possible."
+            explanation = "Using Banker’s Algorithm, the system would have denied the last request that led to this unsafe state, preventing the deadlock."
+            new_rag = self.rag.copy()
+
+        tk.Label(apply_frame, text=f"Applied Prevention Technique: {best_method}", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(anchor="w", pady=5)
+        tk.Label(apply_frame, text=f"Action: {suggestion}", font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=800, justify="left").pack(anchor="w", pady=5)
+        tk.Label(apply_frame, text=f"Explanation: {explanation}", font=("Arial", 14), bg="#1a1a1a", fg="white", wraplength=800, justify="left").pack(anchor="w", pady=5)
+
+        tk.Label(scrollable_frame, text="Previous State (Deadlocked):", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#ff9999").pack(pady=5)
+        plt.clf()
+        pos = nx.spring_layout(self.rag)
+        nx.draw_networkx_nodes(self.rag, pos, nodelist=[p for p in self.rag.nodes if p.startswith("P")], node_color="#ff9999", node_shape="s", node_size=500)
+        nx.draw_networkx_nodes(self.rag, pos, nodelist=self.resources, node_color="#9999ff", node_shape="o", node_size=500)
+        nx.draw_networkx_edges(self.rag, pos, edgelist=[(u, v) for u, v in self.rag.edges if u in self.resources], edge_color="black", style="solid", width=2)
+        nx.draw_networkx_edges(self.rag, pos, edgelist=[(u, v) for u, v in self.rag.edges if v in self.resources], edge_color="gray", style="dashed", width=2)
+        nx.draw_networkx_labels(self.rag, pos, font_size=10)
+        
+        prev_canvas_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        prev_canvas_frame.pack(pady=10)
+        prev_rag_canvas = FigureCanvasTkAgg(plt.gcf(), master=prev_canvas_frame)
+        prev_rag_canvas.draw()
+        prev_rag_canvas.get_tk_widget().pack()
+
+        tk.Label(scrollable_frame, text="Resolved State:", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=5)
+        plt.clf()
+        pos = nx.spring_layout(new_rag)
+        nx.draw_networkx_nodes(new_rag, pos, nodelist=[p for p in new_rag.nodes if p.startswith("P")], node_color="#ff9999", node_shape="s", node_size=500)
+        nx.draw_networkx_nodes(new_rag, pos, nodelist=self.resources, node_color="#9999ff", node_shape="o", node_size=500)
+        nx.draw_networkx_edges(new_rag, pos, edgelist=[(u, v) for u, v in new_rag.edges if u in self.resources], edge_color="black", style="solid", width=2)
+        nx.draw_networkx_edges(new_rag, pos, edgelist=[(u, v) for u, v in new_rag.edges if v in self.resources], edge_color="gray", style="dashed", width=2)
+        nx.draw_networkx_labels(new_rag, pos, font_size=10)
+        
+        resolved_canvas_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        resolved_canvas_frame.pack(pady=10)
+        resolved_rag_canvas = FigureCanvasTkAgg(plt.gcf(), master=resolved_canvas_frame)
+        resolved_rag_canvas.draw()
+        resolved_rag_canvas.get_tk_widget().pack()
+
+        ttk.Button(scrollable_frame, text="Back to Home", command=lambda: [prevent_window.destroy(), self.create_home_page()]).pack(pady=15)
+
+        self.apply_theme()
+
 if __name__ == "__main__":
-    random.seed(42)
-    np.random.seed(42)
-    setup_gui()
-    log_event("AIDM system initialized")
-    log_event("Example Deadlock Conditions:")
-    log_event("- Mutual Exclusion: Printer held by P1 exclusively")
-    log_event("- Hold and Wait: P1 holds Printer, waits for Disk")
-    log_event("- No Preemption: P2 can't take Disk from P3")
-    log_event("- Circular Wait: P1 waits for Disk (P2), P2 waits for Printer (P1)")
+    root = tk.Tk()
+    app = DeadlockVisualizer(root)
     root.mainloop()
