@@ -283,7 +283,6 @@ class DeadlockVisualizer:
             return None
 
     def generate_deadlock_explanation(self, cycle):
-        # Analyze the cycle to explain circular wait
         wait_explanations = []
         n = len(cycle) - 1  # Last element is the repeated start process
         for i in range(0, n-1, 2):
@@ -292,7 +291,6 @@ class DeadlockVisualizer:
             holder = cycle[i+2] if i+2 < n else cycle[0]
             wait_explanations.append(f"Process {process} is waiting for resource {resource}, which is held by Process {holder}.")
         
-        # Combine into full explanation
         explanation = "Reason for Deadlock: Circular Wait\n\n"
         explanation += "The deadlock occurred due to a circular wait condition, where processes form a loop waiting for resources held by others:\n"
         explanation += "\n".join(wait_explanations) + "\n\n"
@@ -406,8 +404,7 @@ class DeadlockVisualizer:
         if deadlock:
             tk.Label(scrollable_frame, text=f"Cycles: {deadlock}", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(pady=5)
             if is_manual:
-                # Add deadlock reason explanation for custom scenario
-                explanation = self.generate_deadlock_explanation(deadlock[0])  # Use the first cycle
+                explanation = self.generate_deadlock_explanation(deadlock[0])
                 tk.Label(scrollable_frame, text=explanation, font=("Arial", 12), bg="#1a1a1a", fg="white", wraplength=1000, justify="left").pack(pady=10)
                 ttk.Button(scrollable_frame, text="Apply Prevention", command=lambda: self.show_prevention_options(deadlock, scrollable_frame)).pack(pady=10)
             else:
@@ -418,6 +415,34 @@ class DeadlockVisualizer:
         tk.Label(scrollable_frame, text=f"Banker's Safety: {safe_status}", font=("Arial", 14), bg="#1a1a1a", fg="white").pack(pady=5)
         if safe_seq:
             tk.Label(scrollable_frame, text=f"Safe Sequence: {safe_seq}", font=("Arial", 12), bg="#1a1a1a", fg="white").pack(pady=5)
+
+        # Add Histograms for Allocated vs Requested Resources
+        tk.Label(scrollable_frame, text="Resource Distribution Comparison", font=("Arial", 16, "italic"), bg="#1a1a1a", fg="#4a90e2").pack(pady=10)
+
+        # Calculate total allocated and requested per process (sum across all resources)
+        allocated_totals = [sum(self.allocated[p].values()) for p in self.processes]
+        requested_totals = [sum(self.requested[p].values()) for p in self.processes]
+
+        # Create histogram figure
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bar_width = 0.35
+        index = np.arange(len(self.processes))
+
+        ax.bar(index, allocated_totals, bar_width, label="Allocated Resources", color="#ff9999")
+        ax.bar(index + bar_width, requested_totals, bar_width, label="Requested Resources", color="#9999ff")
+        ax.set_xlabel("Processes")
+        ax.set_ylabel("Number of Resources")
+        ax.set_title("Allocated vs Requested Resources per Process")
+        ax.set_xticks(index + bar_width / 2)
+        ax.set_xticklabels(self.processes)
+        ax.legend()
+
+        # Embed histogram in Tkinter window
+        hist_frame = tk.Frame(scrollable_frame, bg="#1a1a1a")
+        hist_frame.pack(pady=10)
+        hist_canvas = FigureCanvasTkAgg(fig, master=hist_frame)
+        hist_canvas.draw()
+        hist_canvas.get_tk_widget().pack()
 
         ttk.Button(scrollable_frame, text="Back to Home", command=self.back_to_home).pack(pady=15)
 
